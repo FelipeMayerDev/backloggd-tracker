@@ -4,7 +4,7 @@ Registra automaticamente no [Backloggd](https://backloggd.com) as sessões dos j
 
 - Abriu o jogo: ele vai para a prateleira **playing**.
 - Fechou o jogo: a sessão (data e duração) entra no diário do jogo, e aparece uma notificação.
-- O jogo é reconhecido sozinho, sem cadastro: Steam, Epic, GOG, Riot, Xbox, Wine/Proton, ou qualquer pasta com "Games" ou "Jogos" no nome. Emuladores não são reconhecidos.
+- O jogo é reconhecido sozinho, onde quer que esteja instalado, e fica salvo no `games.json`. Emuladores não são reconhecidos.
 
 > Projeto não oficial, sem vínculo com o Backloggd. O Backloggd não tem API pública: este projeto usa os endpoints internos do site, via [backloggd-mcp](https://github.com/DenisionSoft/backloggd-mcp), e pode quebrar quando o site mudar.
 
@@ -61,12 +61,18 @@ journalctl --user -u backloggd-tracker -f   # logs
 
 ## Como funciona
 
-A cada minuto, o tracker lista os processos em execução, pelo caminho completo no Windows e pela linha de comando no Linux, o que inclui jogos rodando por Wine/Proton. Para cada processo, ele tenta achar o nome do jogo assim:
+A cada minuto, o tracker olha todos os aplicativos abertos: o caminho completo e o título da janela no Windows, e a linha de comando no Linux, o que inclui jogos rodando por Wine/Proton.
 
-1. **Pasta de instalação.** Para jogos da Steam (`steamapps/common/<pasta>`), o nome oficial vem do `appmanifest` da Steam. Fora da Steam, vale a pasta logo abaixo de qualquer diretório com "games" ou "jogos" no nome: `Epic Games\X`, `GOG Games\X`, `Riot Games\X`, `XboxGames\X`, `D:\Jogos\X`.
-2. **Confirmação no Backloggd.** O nome é buscado no próprio Backloggd, cuja base vem do IGDB, e só conta se bater **exatamente** com o título de um jogo, ignorando maiúsculas, acentos e pontuação. Isso evita duas coisas: gravar a sessão no jogo errado por causa de uma busca aproximada, e tratar programas comuns como jogo. Por exemplo, "Riot Client" e "Epic Online Services" ficam de fora.
+1. **Já conhecido?** Se o executável está no `games.json`, usa o título que está lá.
+2. **Parece jogo?** Senão, o aplicativo só é avaliado se houver um sinal de que é jogo:
+   - o **Windows o classificou como jogo**, numa lista que ele mesmo mantém para o Modo de Jogo e a Game Bar (`HKCU\System\GameConfigStore`). Essa lista inclui jogos instalados em qualquer lugar: Downloads, repacks, `D:\`;
+   - ou ele está numa **pasta de jogos**: `steamapps\common`, ou uma pasta com "games" ou "jogos" no nome (`Epic Games`, `GOG Games`, `Riot Games`, `XboxGames`, `D:\Jogos`).
+3. **Qual jogo?** O tracker junta nomes candidatos (o nome oficial da Steam pelo `appmanifest`, as pastas do caminho, o nome do produto e a descrição do `.exe`, o título da janela) e busca cada um no próprio Backloggd, cuja base vem do IGDB. Um candidato só conta se bater **exatamente** com o título de um jogo, ignorando maiúsculas, acentos e pontuação. Se vários baterem, fica o título mais longo, para que "Clair Obscur Expedition 33" ganhe do nome interno "Sandfall".
+4. **Aprende.** O jogo reconhecido é gravado no `games.json` e aparece a notificação "Jogo reconhecido". Da próxima vez, ele é identificado direto, sem nova busca.
 
-Jogos instalados fora dessas pastas não são reconhecidos. Para eles, e para corrigir qualquer erro, crie um `games.json` (veja `games.example.json`). Nele, cada nome de `.exe` aponta para o título correto no Backloggd, ou para `null` se deve ser ignorado.
+Os dois filtros juntos (sinal de jogo e título exato) são necessários porque muitos aplicativos têm o mesmo nome de algum jogo antigo do Backloggd: Steam, Parsec e Hydra, por exemplo. Emuladores e launchers (cliente do League, Epic, Battle.net, EA, Ubisoft, GOG Galaxy) são ignorados.
+
+Se algum jogo for reconhecido errado, corrija o título no `games.json`, ou troque por `null` para ignorar aquele executável. Para jogos não reconhecidos, adicione uma linha à mão (veja `games.example.json`). A chave pode ser o caminho completo ou só o nome do `.exe`.
 
 Além disso:
 

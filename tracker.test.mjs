@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { tick, toSession, candidatesFor, normaliseTitle } from "./tracker.mjs";
+import { tick, toSession, folderNames, pathNames, normaliseTitle, identify } from "./tracker.mjs";
 
 const T = new Date("2026-10-19T20:00:00").getTime();
 const min = 60_000;
@@ -27,18 +27,39 @@ assert.equal(toSession({ id: 1, title: "A", start: T, end: T + 300 * min }).end_
 // Detection.
 assert.equal(normaliseTitle("ELDEN RING™"), normaliseTitle("Elden Ring"));
 assert.equal(normaliseTitle("Hollow Knight: Silksong"), normaliseTitle("Hollow Knight Silksong"));
-assert.deepEqual(candidatesFor("D:\\Stuff\\Control\\control_dx12.exe"), []); // outside any games folder
-assert.deepEqual(candidatesFor("C:\\Games e Jogos\\Control Resonant\\CONTROLResonant.exe"), ["Control Resonant"]);
-assert.deepEqual(candidatesFor("C:\\Program Files\\Epic Games\\Launcher\\Portal\\x.exe"), []);
-assert.deepEqual(candidatesFor("C:\\Riot Games\\VALORANT\\live\\VALORANT.exe"), ["VALORANT"]);
-assert.deepEqual(candidatesFor("Z:\\home\\me\\Games\\Hades\\Hades.exe"), ["Hades"]); // Wine path
-assert.deepEqual(candidatesFor("C:\\Windows\\explorer.exe"), []);
-assert.deepEqual(candidatesFor("C:\\Steam\\steamapps\\common\\wallpaper_engine\\wallpaper64.exe"), []);
+// Library folders.
+assert.deepEqual(folderNames("D:\\Stuff\\Control\\control_dx12.exe"), []); // no library folder: needs the Game Bar signal
+assert.deepEqual(folderNames("C:\\Games e Jogos\\Control Resonant\\CONTROLResonant.exe"), ["Control Resonant"]);
+assert.deepEqual(folderNames("C:\\Program Files\\Epic Games\\Launcher\\Portal\\x.exe"), []);
+assert.deepEqual(folderNames("C:\\Riot Games\\VALORANT\\live\\VALORANT.exe"), ["VALORANT"]);
+assert.deepEqual(folderNames("Z:\\home\\me\\Games\\Hades\\Hades.exe"), ["Hades"]); // Wine path
+assert.deepEqual(folderNames("C:\\Windows\\explorer.exe"), []);
+
+// Folder names worth looking up for a game Windows flagged, deepest first, minus system/engine folders.
+assert.deepEqual(
+  pathNames("C:\\Program Files (x86)\\DODI-Repacks\\Lies of P\\LiesofP\\Binaries\\Win64\\LOP-Win64-Shipping.exe"),
+  ["LiesofP", "Lies of P", "DODI-Repacks"]);
+assert.deepEqual(
+  pathNames("C:\\Users\\Focky\\Downloads\\ELDEN RING NIGHTREIGN\\ELDEN RING NIGHTREIGN\\nightreign.exe"),
+  ["ELDEN RING NIGHTREIGN", "ELDEN RING NIGHTREIGN"]);
+
+// Inside a library, never climb above it (no "Steam" from Program Files (x86)\Steam).
+assert.deepEqual(
+  pathNames("C:\\Program Files (x86)\\Steam\\steamapps\\common\\EdithFinch\\FinchGame\\Binaries\\Win64\\FinchGame.exe"),
+  ["FinchGame", "EdithFinch"]);
 
 // Steam: the appmanifest name wins over the install folder name.
 const lib = join(mkdtempSync(join(tmpdir(), "bt-")), "steamapps");
 mkdirSync(join(lib, "common", "DarkSoulsIII", "Game"), { recursive: true });
 writeFileSync(join(lib, "appmanifest_374320.acf"), '"AppState"\n{\n\t"name"\t\t"DARK SOULS™ III"\n\t"installdir"\t\t"DarkSoulsIII"\n}');
-assert.deepEqual(candidatesFor(join(lib, "common", "DarkSoulsIII", "Game", "DarkSoulsIII.exe")), ["DARK SOULS™ III"]);
+assert.deepEqual(folderNames(join(lib, "common", "DarkSoulsIII", "Game", "DarkSoulsIII.exe")), ["DARK SOULS™ III"]);
+
+// identify(): emulators, launchers and unflagged apps are never looked up.
+const asked = [];
+const fake = async (name) => { asked.push(name); return name === "Xenia" || name === "Steam" ? { id: 9, title: name } : null; };
+assert.equal(await identify({ path: "D:\\Emuladores\\Xenia\\xenia_canary.exe", title: "Xenia", isGame: true }, fake), null);
+assert.equal(await identify({ path: "C:\\Riot Games\\League of Legends\\LeagueClientUx.exe", title: "", isGame: true }, fake), null);
+assert.equal(await identify({ path: "C:\\Program Files\\Parsec\\parsecd.exe", title: "Parsec", isGame: false }, fake), null);
+assert.deepEqual(asked, []);
 
 console.log("ok");

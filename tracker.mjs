@@ -47,14 +47,43 @@ export function toSession({ id, title, start, end }) {
 
 // ---------------------------------------------------------------- detection
 
-// Optional overrides: exe name -> Backloggd title, or null to ignore that exe.
-let OVERRIDES = {};
-try { OVERRIDES = JSON.parse(readFileSync(here("games.json"), "utf8")); } catch {}
-OVERRIDES = Object.fromEntries(Object.entries(OVERRIDES).map(([k, v]) => [k.toLowerCase(), v]));
-// Always-running apps that sit in game folders.
-const IGNORED = new Set(["wallpaper32.exe", "wallpaper64.exe", "steam.exe", "steamwebhelper.exe"]);
+// games.json: exe full path or exe name -> Backloggd title, or null to ignore it.
+// The tracker adds every game it recognises here, so it doubles as the learned list.
+const GAMES_FILE = here("games.json");
+let GAMES = {};
+try { GAMES = JSON.parse(readFileSync(GAMES_FILE, "utf8")); } catch {}
+const lookup = () => new Map(Object.entries(GAMES).map(([k, v]) => [k.replace(/\\/g, "/").toLowerCase(), v]));
+let known = lookup();
+
+export function override(path) {
+  const p = path.replace(/\\/g, "/").toLowerCase();
+  return known.has(p) ? known.get(p) : known.get(p.split("/").pop());
+}
+
+function learn(path, title) {
+  // Re-read first so hand edits made while running survive, and never overwrite a file
+  // that doesn't parse: that would wipe the user's entries.
+  let current = {};
+  try { current = JSON.parse(readFileSync(GAMES_FILE, "utf8")); } catch (e) {
+    if (e.code !== "ENOENT") return console.error("games.json is invalid, not saving", title, e.message);
+  }
+  GAMES = { ...current, [path]: title };
+  known = lookup();
+  try { writeFileSync(GAMES_FILE, JSON.stringify(GAMES, null, 2)); } catch (e) { console.error("games.json:", e.message); }
+}
+
+// Always-running apps and launchers that sit in game folders (Windows flags some launchers as games).
+const IGNORED = new Set([
+  "wallpaper32.exe", "wallpaper64.exe", "steam.exe", "steamwebhelper.exe",
+  "leagueclient.exe", "leagueclientux.exe", "riotclientservices.exe", "epicgameslauncher.exe",
+  "battle.net.exe", "eadesktop.exe", "upc.exe", "ubisoftconnect.exe", "galaxyclient.exe",
+]);
+// Emulators: the process is the emulator, not the game, and some share names with games (Xenia).
+const EMULATOR = /\/[^/]*emula/i;
 // Folder names under a games directory that are never the game itself.
 const GENERIC_DIRS = /^(launcher|client|bin|common|redist|_commonredist|tools|steamworks shared|steam linux runtime.*|proton.*)$/i;
+// Path segments that never name a game: system folders and engine/build subfolders.
+const NOT_A_TITLE = /^([a-z]:|users|program files( \(x86\))?|programdata|appdata|local|roaming|downloads|desktop|documents|home|binaries|win64|win32|x64|x86|bin|bin64|game|live|retail|content|engine|steamapps|common|steam)$|games|jogos|juegos/i;
 
 export const normaliseTitle = (s) =>
   s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
@@ -79,42 +108,97 @@ function steamName(libraryRoot, installdir) {
   return steamNames.get(key);
 }
 
-// Candidate game names for one process path, best guess first.
-export function candidatesFor(path) {
-  const p = path.replace(/\\/g, "/");
-  const base = p.toLowerCase().split("/").pop();
-  if (IGNORED.has(base) || OVERRIDES[base] === null) return [];
-  if (typeof OVERRIDES[base] === "string") return [OVERRIDES[base]];
-
+// Names implied by a game library folder: steamapps/common/<X>, or <X> under any
+// "games"/"jogos" directory (Epic Games\X, GOG Games\X, Riot Games\X, D:\Jogos\X).
+// Being in such a folder is also one of the signals that a process is a game.
+export function folderNames(path) {
+  const parts = path.replace(/\\/g, "/").split("/");
   const out = [];
-  const parts = p.split("/");
   for (let i = 0; i < parts.length - 2; i++) {
     const dir = parts[i].toLowerCase();
     const next = parts[i + 1];
     if (GENERIC_DIRS.test(next)) continue;
-    if (dir === "common" && parts[i - 1]?.toLowerCase() === "steamapps") {
-      out.push(steamName(parts.slice(0, i).join("/"), next));
-    } else if (/games|jogos|juegos/.test(dir)) {
-      // Covers Epic Games\X, GOG Games\X, Riot Games\X, D:\Jogos\X and the like.
-      out.push(next);
-    }
+    if (dir === "common" && parts[i - 1]?.toLowerCase() === "steamapps") out.push(steamName(parts.slice(0, i).join("/"), next));
+    else if (/games|jogos|juegos/.test(dir)) out.push(next);
   }
   return [...new Set(out)];
 }
 
-// Full paths of running processes (Windows) or their command-line args (Linux, incl. Wine/Proton).
-function runningPaths() {
-  if (process.platform === "win32") {
-    const out = execFileSync("powershell", ["-NoProfile", "-Command", "Get-Process | ForEach-Object Path"],
-      { encoding: "utf8", windowsHide: true });
-    return out.split(/\r?\n/).filter(Boolean);
-  }
-  const paths = [];
-  for (const pid of readdirSync("/proc").filter((d) => /^\d+$/.test(d))) {
-    try { paths.push(...readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter((a) => /[\\/]/.test(a))); } catch {}
-  }
-  return paths;
+// Every folder on the path that could be the game's name, deepest first. Inside a game
+// library only the folders below it count, so "...\\Steam\\steamapps\\common\\X" never yields "Steam".
+export function pathNames(path) {
+  const dirs = path.replace(/\\/g, "/").split("/").slice(0, -1);
+  const root = dirs.findLastIndex((d, i) => /games|jogos|juegos/i.test(d) || (/^common$/i.test(d) && /^steamapps$/i.test(dirs[i - 1] ?? "")));
+  return dirs
+    .filter((d, i) => i > root && d && !NOT_A_TITLE.test(d) && !/^(users|home)$/i.test(dirs[i - 1] ?? "")) // skip the user name too
+    .reverse();
 }
+
+// Running processes: { path, title (window), isGame (Windows' own Game Bar classification) }.
+// Linux has neither, so it relies on game folders, games.json, and Wine/Proton exe paths in argv.
+const PS_PROCESSES = "$g=@{};Get-ChildItem HKCU:\\System\\GameConfigStore\\Children -EA 0|%{$p=(Get-ItemProperty $_.PSPath).MatchedExeFullPath;if($p){$g[$p.ToLower()]=1}};" +
+  "ConvertTo-Json -Compress -InputObject @(Get-Process|?{$_.Path}|%{@{path=$_.Path;title=$_.MainWindowTitle;isGame=$g.ContainsKey($_.Path.ToLower())}})";
+
+function runningProcesses() {
+  if (process.platform === "win32") {
+    return JSON.parse(execFileSync("powershell", ["-NoProfile", "-Command", PS_PROCESSES],
+      { encoding: "utf8", windowsHide: true, maxBuffer: 1 << 26 }));
+  }
+  const out = [];
+  for (const pid of readdirSync("/proc").filter((d) => /^\d+$/.test(d))) {
+    try {
+      for (const a of readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0")) if (/[\\/]/.test(a)) out.push({ path: a, title: "", isGame: false });
+    } catch {}
+  }
+  return out;
+}
+
+// Product name and description baked into a Windows exe.
+function exeInfo(path) {
+  if (process.platform !== "win32") return [];
+  try {
+    const out = execFileSync("powershell", ["-NoProfile", "-Command",
+      "$v=(Get-Item -LiteralPath $env:EXE -EA Stop).VersionInfo;ConvertTo-Json -Compress @($v.ProductName,$v.FileDescription)"],
+      { encoding: "utf8", windowsHide: true, env: { ...process.env, EXE: path }, stdio: ["ignore", "pipe", "ignore"] });
+    return JSON.parse(out).filter(Boolean);
+  } catch { return []; }
+}
+
+// A process is only looked up when something says it's a game: games.json, Windows'
+// Game Bar list, or a game library folder. A Backloggd title match alone isn't enough:
+// apps like Steam, Parsec and Hydra share names with old games.
+const identified = new Map(); // path -> game | null, for processes not yet in games.json
+// `resolve` maps a name to its exact-match Backloggd game, or null.
+export async function identify({ path, title, isGame }, resolve) {
+  const base = path.replace(/\\/g, "/").split("/").pop().toLowerCase();
+  if (IGNORED.has(base) || EMULATOR.test(path.replace(/\\/g, "/"))) return null;
+  const listed = override(path);
+  if (listed === null) return null;
+  if (typeof listed === "string") return resolve(listed);
+  if (identified.has(path)) return identified.get(path);
+
+  const folders = folderNames(path);
+  let game = null;
+  if (isGame || folders.length) {
+    // Library folder names (incl. Steam's official name) win; otherwise the longest
+    // matching title, so "Clair Obscur Expedition 33" beats the exe's "Sandfall".
+    for (const name of folders) if ((game = await resolve(name))) break;
+    if (!game && isGame) {
+      for (const name of new Set([title, ...exeInfo(path), ...pathNames(path)])) {
+        const hit = await resolve(name);
+        if (hit && (!game || hit.title.length > game.title.length)) game = hit;
+      }
+    }
+  }
+  identified.set(path, game);
+  if (game) {
+    learn(path, game.title);
+    console.log(`recognised ${path} -> ${game.title} (${game.id})`);
+    notify("Jogo reconhecido", `${game.title} foi adicionado ao games.json`);
+  }
+  return game;
+}
+
 
 // ---------------------------------------------------------------- notifications
 
@@ -171,27 +255,24 @@ async function main() {
   }
   const tool = (name, args) => backloggd((c) => writeTools.find((t) => t.name === name).handler(args, c));
 
-  // Only an exact title match counts: autocomplete's fuzzy hits would log the wrong game,
-  // and requiring a real Backloggd game is what keeps ordinary apps from being tracked.
+  // Only an exact title match counts: autocomplete's fuzzy hits would log the wrong game.
   // ponytail: several games sharing a title resolve to autocomplete's first (most popular) one.
   const resolved = new Map();
   async function resolve(name) {
-    const key = normaliseTitle(name);
+    const key = normaliseTitle(name ?? "");
     if (!key) return null;
     if (!resolved.has(key)) {
       const hits = await backloggd((c) => c.api.autocomplete(name));
       const hit = hits.find((h) => normaliseTitle(h.title) === key);
       resolved.set(key, hit ? { id: hit.id, title: hit.title } : null);
-      if (hit) console.log(`recognised ${name} -> ${hit.title} (${hit.id})`);
     }
     return resolved.get(key);
   }
+
   async function currentGame() {
-    for (const path of runningPaths()) {
-      for (const name of candidatesFor(path)) {
-        const game = await resolve(name);
-        if (game) return game;
-      }
+    for (const proc of runningProcesses()) {
+      const game = await identify(proc, resolve);
+      if (game) return game;
     }
     return null;
   }

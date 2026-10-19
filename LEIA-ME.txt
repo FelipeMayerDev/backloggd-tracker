@@ -45,24 +45,29 @@ Mantenha o backloggd-tracker.exe e o .env sempre juntos na mesma pasta.
 
 
 COMO O JOGO E RECONHECIDO
-   - Pela pasta de instalacao: Steam, Epic, GOG, Riot, Xbox, ou qualquer
-     pasta com "Games" ou "Jogos" no nome (ex.: D:\Jogos\Hades\Hades.exe).
-   - So conta se o nome bater exatamente com um jogo do Backloggd, entao
-     programas comuns nao viram "jogo".
-   - Jogos instalados em outras pastas e emuladores nao sao reconhecidos.
-     Dica: guarde seus jogos numa pasta chamada "Jogos" ou "Games", ou use
-     o games.json abaixo.
+   O tracker olha os aplicativos abertos e avalia os que parecem jogo:
+   - os que o proprio Windows classificou como jogo (a mesma lista do
+     Modo de Jogo e da Game Bar), instalados em qualquer pasta;
+   - os que estao na Steam, Epic, GOG, Riot, Xbox, ou numa pasta com
+     "Games" ou "Jogos" no nome.
+   O nome so conta se bater exatamente com um jogo do Backloggd.
 
-   Algum jogo nao foi reconhecido, ou um programa foi confundido com jogo?
-   Crie um arquivo games.json na pasta do tracker:
+   Quando reconhece um jogo novo, ele aparece numa notificacao
+   "Jogo reconhecido" e e salvo no arquivo games.json, na pasta do tracker.
+   Emuladores e launchers (cliente do League, Epic, Battle.net...) sao
+   ignorados.
+
+   Reconheceu errado? Abra o games.json no Bloco de Notas e corrija o
+   titulo, ou troque por null para ignorar aquele programa:
 
       {
-        "JogoNaoDetectado.exe": "Titulo Exato no Backloggd",
+        "C:\\Jogos\\Exemplo\\Exemplo.exe": "Titulo Exato no Backloggd",
         "ProgramaQueNaoEJogo.exe": null
       }
 
-   Para achar o nome do .exe: abra o jogo, aperte Ctrl+Shift+Esc e procure
-   na aba "Detalhes".
+   Um jogo nao foi reconhecido? Adicione uma linha assim. Para achar o
+   nome do .exe: abra o jogo, aperte Ctrl+Shift+Esc e procure na aba
+   "Detalhes". Nos caminhos, use \\ (duas barras).
 
 
 DUVIDAS
