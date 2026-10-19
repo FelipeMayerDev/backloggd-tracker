@@ -54,7 +54,7 @@ const PKG = "build/backloggd-tracker";
 mkdirSync(PKG, { recursive: true });
 writeFileSync(`${PKG}/backloggd-tracker.exe`, exe);
 writeFileSync(`${PKG}/.env`, "# Cole aqui o cookie _backloggd_session (veja LEIA-ME.txt)\r\nBACKLOGGD_SESSION=\r\n");
-writeFileSync(`${PKG}/games.json`, readFileSync("games.example.json"));
+rmSync(`${PKG}/games.json`, { force: true });
 writeFileSync(`${PKG}/LEIA-ME.txt`, readFileSync("LEIA-ME.txt", "utf8").replace(/\r?\n/g, "\r\n"));
 rmSync("build/backloggd-tracker-windows.zip", { force: true });
 // bsdtar writes zip; on Windows it ships as tar.exe.

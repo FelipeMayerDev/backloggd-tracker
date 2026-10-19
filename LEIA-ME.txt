@@ -3,10 +3,9 @@ BACKLOGGD TRACKER
 
 Registra no Backloggd, sozinho, o tempo que voce joga cada jogo.
 Abriu o jogo: ele vai para "playing". Fechou: a sessao entra no diario do jogo
-e aparece uma notificacao do Windows.
+e aparece uma notificacao do Windows. O jogo e reconhecido automaticamente.
 
-Mantenha os 3 arquivos sempre juntos na mesma pasta:
-  backloggd-tracker.exe, .env e games.json
+Mantenha o backloggd-tracker.exe e o .env sempre juntos na mesma pasta.
 
 
 1. ESCOLHA UMA PASTA
@@ -27,37 +26,42 @@ Mantenha os 3 arquivos sempre juntos na mesma pasta:
    "Falha ao salvar sessao", repita este passo e reinicie o tracker.
 
 
-3. SEUS JOGOS (arquivo games.json)
-   Abra o games.json no Bloco de Notas. Cada linha liga o executavel do
-   jogo ao nome dele no Backloggd:
-
-      {
-        "CONTROLResonant.exe": "Control Resonant",
-        "eldenring.exe": "Elden Ring"
-      }
-
-   - Para descobrir o executavel: abra o jogo, aperte Ctrl+Shift+Esc,
-     va na aba "Detalhes" e procure o nome do .exe.
-   - Escreva o nome do jogo exatamente como aparece no Backloggd.
-   - Entre as linhas vai virgula; depois da ultima, nao.
-
-
-4. TESTE
+3. TESTE
    De dois cliques no backloggd-tracker.exe. Nenhuma janela abre, ele roda
-   escondido. Abra um jogo da lista e espere 1 minuto: deve aparecer um
-   arquivo tracker.log na pasta com "playing <jogo>".
+   escondido. Abra um jogo e espere 1 minuto: no arquivo tracker.log da
+   pasta deve aparecer "playing <jogo>".
 
    Se o Windows mostrar "O Windows protegeu o computador", clique em
    "Mais informacoes" > "Executar assim mesmo". O aviso aparece porque o
    programa nao tem assinatura digital paga.
 
 
-5. INICIAR JUNTO COM O WINDOWS
+4. INICIAR JUNTO COM O WINDOWS
    a) Clique com o botao direito no backloggd-tracker.exe >
       "Mostrar mais opcoes" > "Criar atalho".
    b) Aperte Win+R, digite  shell:startup  e de Enter.
    c) Mova o atalho criado para a pasta que abriu.
    Pronto: ele inicia sozinho sempre que voce entrar no Windows.
+
+
+COMO O JOGO E RECONHECIDO
+   - Pela lista de jogos do Discord (a mesma que mostra "Jogando X").
+   - Pela pasta de instalacao: Steam, Epic, GOG, Riot, Xbox, ou qualquer
+     pasta com "Games" ou "Jogos" no nome (ex.: D:\Jogos\Hades\Hades.exe).
+   - So conta se o nome bater exatamente com um jogo do Backloggd, entao
+     programas comuns nao viram "jogo".
+   - Emuladores nao sao reconhecidos (use o games.json abaixo).
+
+   Algum jogo nao foi reconhecido, ou um programa foi confundido com jogo?
+   Crie um arquivo games.json na pasta do tracker:
+
+      {
+        "JogoNaoDetectado.exe": "Titulo Exato no Backloggd",
+        "ProgramaQueNaoEJogo.exe": null
+      }
+
+   Para achar o nome do .exe: abra o jogo, aperte Ctrl+Shift+Esc e procure
+   na aba "Detalhes".
 
 
 DUVIDAS

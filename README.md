@@ -4,7 +4,7 @@ Registra automaticamente no [Backloggd](https://backloggd.com) as sessões dos j
 
 - Abriu o jogo: ele vai para a prateleira **playing**.
 - Fechou o jogo: a sessão (data e duração) entra no diário do jogo, e aparece uma notificação.
-- Funciona com qualquer jogo (Steam, Epic, emulador, executável solto, Wine/Proton), porque olha os processos do sistema em vez de uma loja.
+- O jogo é reconhecido sozinho, sem cadastro: Steam, Epic, GOG, Riot, Xbox, Wine/Proton, ou qualquer pasta com "Games" ou "Jogos" no nome. Emuladores não são reconhecidos.
 
 > Projeto não oficial, sem vínculo com o Backloggd. O Backloggd não tem API pública: este projeto usa os endpoints internos do site, via [backloggd-mcp](https://github.com/DenisionSoft/backloggd-mcp), e pode quebrar quando o site mudar.
 
@@ -26,8 +26,7 @@ O resto deste README é para quem quer rodar a partir do código-fonte (Windows 
 git clone https://github.com/FelipeMayerDev/backloggd-tracker
 cd backloggd-tracker
 npm ci
-cp .env.example .env              # Windows: copy .env.example .env
-cp games.example.json games.json  # Windows: copy games.example.json games.json
+cp .env.example .env   # Windows: copy .env.example .env
 ```
 
 ### 1. Login do Backloggd (`.env`)
@@ -42,31 +41,13 @@ O cookie expira com o tempo. Quando isso acontecer, aparece uma notificação "F
 
 Usuário e senha também funcionam (`BACKLOGGD_USERNAME` / `BACKLOGGD_PASSWORD`), mas não em contas criadas com login do Google, Discord ou Steam.
 
-### 2. Jogos (`games.json`)
-
-Liste o executável de cada jogo e o título dele no Backloggd:
-
-```json
-{
-  "CONTROLResonant.exe": "Control Resonant",
-  "eldenring.exe": "Elden Ring"
-}
-```
-
-Para descobrir o nome do executável:
-
-- **Windows:** abra o jogo e procure no Gerenciador de Tarefas, aba Detalhes.
-- **Linux:** abra o jogo e rode `ps -eo args | grep -i <parte do nome>`. Em jogos rodando por Wine/Proton, use o `.exe` do Windows mesmo. Em jogos nativos, use o nome do binário.
-
-O mesmo `games.json` serve para os dois sistemas. Use o título exatamente como aparece no Backloggd, para não pegar o jogo errado.
-
-### 3. Rodar
+### 2. Rodar
 
 ```sh
 npm start
 ```
 
-Depois de editar o `games.json` ou o `.env`, reinicie o tracker.
+Depois de editar o `.env` ou o `games.json`, reinicie o tracker.
 
 **Iniciar com o Windows:** crie um atalho para `start-tracker.vbs` em `shell:startup` (Win+R, digite `shell:startup`). O tracker roda escondido, e a saída vai para `tracker.log`.
 
@@ -80,7 +61,16 @@ journalctl --user -u backloggd-tracker -f   # logs
 
 ## Como funciona
 
-A cada minuto, o tracker lista os processos (`tasklist` no Windows, `ps` no Linux) e confere se algum executável do `games.json` está aberto.
+A cada minuto, o tracker lista os processos em execução, pelo caminho completo no Windows e pela linha de comando no Linux, o que inclui jogos rodando por Wine/Proton. Para cada processo, ele tenta achar o nome do jogo assim:
+
+1. **Lista de jogos do Discord.** O Discord mantém uma [lista pública](https://discord.com/api/v9/applications/detectable) de cerca de 25 mil jogos, com os executáveis de cada um (é o que faz aparecer "Jogando X"). O tracker baixa essa lista e guarda em `discord-games.json` por 7 dias.
+2. **Pasta de instalação.** Para jogos da Steam (`steamapps/common/<pasta>`), o nome oficial vem do `appmanifest` da Steam. Fora da Steam, vale a pasta logo abaixo de qualquer diretório com "games" ou "jogos" no nome: `Epic Games\X`, `GOG Games\X`, `Riot Games\X`, `XboxGames\X`, `D:\Jogos\X`.
+3. **Confirmação no Backloggd.** O nome só conta se bater **exatamente** com o título de um jogo no Backloggd, ignorando maiúsculas, acentos e pontuação. Isso evita duas coisas: gravar a sessão no jogo errado por causa de uma busca aproximada, e tratar programas comuns como jogo. Por exemplo, "Riot Client" e "Epic Online Services" ficam de fora.
+
+Se algum jogo não for reconhecido, ou se um programa for confundido com jogo, crie um `games.json` (veja `games.example.json`). Nele, cada nome de `.exe` aponta para o título correto no Backloggd, ou para `null` se deve ser ignorado.
+
+Além disso:
+
 
 - Sessões com menos de 5 minutos são ignoradas (ajuste com `MIN_MINUTES` no `.env`).
 - A sessão termina na última checagem em que o jogo ainda estava aberto, então reiniciar o PC ou o tracker não aumenta o tempo registrado.

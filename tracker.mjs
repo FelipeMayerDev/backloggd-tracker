@@ -1,6 +1,6 @@
-// Watches running processes (Windows or Linux) for the games in games.json and logs each session to Backloggd.
+// Detects the game you're playing (Windows or Linux) and logs each session to Backloggd.
 // Env: backloggd-mcp auth (BACKLOGGD_SESSION | BACKLOGGD_USERNAME/PASSWORD | BACKLOGGD_BROWSER_IMPORT=firefox).
-import { readFileSync, writeFileSync, rmSync, appendFileSync } from "node:fs";
+import { readFileSync, writeFileSync, rmSync, appendFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { execFile, execFileSync } from "node:child_process";
 import { createServer } from "node:net";
@@ -26,45 +26,140 @@ const POLL_MS = 60_000;
 const MIN_MINUTES = Number(process.env.MIN_MINUTES ?? 5); // ignore launcher blips
 const STATE = here("state.json");
 const LOCK_PORT = 47613; // held while running, so a second copy can't double-log sessions
+const DISCORD_DB = here("discord-games.json");
+const DISCORD_DB_MAX_AGE = 7 * 24 * 3600_000;
 
 const day = (t) => new Date(t).toLocaleDateString("sv"); // YYYY-MM-DD, local time
 
-// Pure transition: returns the next state and the finished session, if any.
+// Pure transition on { id, title } games: returns the next state and the finished session, if any.
 export function tick(state, game, now) {
-  if (state?.game === game) return { state: state && { ...state, last: now } };
+  if (state?.id === game?.id) return { state: state && { ...state, last: now } };
   // End at the last poll that saw it, so downtime or restarts don't inflate the session.
   const ended = state && { ...state, end: state.last };
-  return { state: game ? { game, start: now, last: now } : null, ended };
+  return { state: game ? { ...game, start: now, last: now } : null, ended };
 }
 
-export function toSession({ game, start, end }) {
+export function toSession({ id, title, start, end }) {
   const mins = Math.round((end - start) / 60_000);
   if (mins < MIN_MINUTES) return null;
-  const s = { game, date: day(start), hours: Math.floor(mins / 60), minutes: mins % 60 };
+  const s = { game: String(id), title, date: day(start), hours: Math.floor(mins / 60), minutes: mins % 60 };
   if (day(end) !== s.date) s.end_date = day(end);
   return s;
 }
 
-// games.json maps an exe name to its Backloggd title.
-let GAMES = {};
-try { GAMES = JSON.parse(readFileSync(here("games.json"), "utf8")); } catch {}
+// ---------------------------------------------------------------- detection
 
-// Lowercased exe names of running processes.
-export function runningExes() {
-  if (process.platform === "win32") {
-    const out = execFileSync("tasklist", ["/fo", "csv", "/nh"], { encoding: "utf8", windowsHide: true });
-    return new Set(out.split(/\r?\n/).map((l) => l.slice(1, l.indexOf('"', 1)).toLowerCase()));
+// Optional overrides: exe name -> Backloggd title, or null to ignore that exe.
+let OVERRIDES = {};
+try { OVERRIDES = JSON.parse(readFileSync(here("games.json"), "utf8")); } catch {}
+OVERRIDES = Object.fromEntries(Object.entries(OVERRIDES).map(([k, v]) => [k.toLowerCase(), v]));
+// Always-running apps that sit in game folders.
+const IGNORED = new Set(["wallpaper32.exe", "wallpaper64.exe", "steam.exe", "steamwebhelper.exe"]);
+// Folder names under a games directory that are never the game itself.
+const GENERIC_DIRS = /^(launcher|client|bin|common|redist|_commonredist|tools|steamworks shared|steam linux runtime.*|proton.*)$/i;
+
+export const normaliseTitle = (s) =>
+  s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+// Discord's public list of detectable games, indexed by exe basename.
+let discordIndex = new Map();
+export function indexDiscord(apps) {
+  const index = new Map();
+  for (const [name, exes] of apps) {
+    for (const exe of exes) {
+      const base = exe.split("/").pop();
+      if (!index.has(base)) index.set(base, []);
+      index.get(base).push({ suffix: exe, name });
+    }
   }
-  // Native and Wine/Proton games carry their exe path in the command line.
-  // ponytail: splits on whitespace, so an exe *name* with spaces won't match.
-  const out = execFileSync("ps", ["-eo", "args="], { encoding: "utf8" });
-  return new Set(out.split(/\s+/).map((t) => t.split(/[\\/]/).pop().toLowerCase()));
+  return index;
 }
 
-function currentGame() {
-  const running = runningExes();
-  return Object.entries(GAMES).find(([exe]) => running.has(exe.toLowerCase()))?.[1] ?? null;
+async function loadDiscordIndex() {
+  let apps = null;
+  try {
+    if (Date.now() - statSync(DISCORD_DB).mtimeMs < DISCORD_DB_MAX_AGE) apps = JSON.parse(readFileSync(DISCORD_DB, "utf8"));
+  } catch {}
+  if (!apps) {
+    try {
+      const res = await fetch("https://discord.com/api/v9/applications/detectable");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      apps = (await res.json())
+        .map((a) => [a.name, (a.executables ?? [])
+          .filter((e) => (e.os === "win32" || e.os === "linux") && !e.is_launcher)
+          .map((e) => e.name.toLowerCase())])
+        .filter(([, exes]) => exes.length);
+      writeFileSync(DISCORD_DB, JSON.stringify(apps));
+    } catch (e) {
+      console.error("discord game list:", e.message);
+      try { apps = JSON.parse(readFileSync(DISCORD_DB, "utf8")); } catch { apps = []; }
+    }
+  }
+  discordIndex = indexDiscord(apps);
 }
+
+// Steam's appmanifest gives the official name for a steamapps/common/<installdir> folder.
+const steamNames = new Map();
+function steamName(libraryRoot, installdir) {
+  const key = `${libraryRoot}|${installdir}`.toLowerCase();
+  if (!steamNames.has(key)) {
+    let name = installdir;
+    try {
+      for (const f of readdirSync(libraryRoot).filter((f) => /^appmanifest_\d+\.acf$/.test(f))) {
+        const acf = readFileSync(`${libraryRoot}/${f}`, "utf8");
+        if (/"installdir"\s+"([^"]+)"/.exec(acf)?.[1].toLowerCase() === installdir.toLowerCase()) {
+          name = /"name"\s+"([^"]+)"/.exec(acf)?.[1] ?? installdir;
+          break;
+        }
+      }
+    } catch {}
+    steamNames.set(key, name);
+  }
+  return steamNames.get(key);
+}
+
+// Candidate game names for one process path, best guess first.
+export function candidatesFor(path, index = discordIndex) {
+  const p = path.replace(/\\/g, "/");
+  const lower = p.toLowerCase();
+  const base = lower.split("/").pop();
+  if (IGNORED.has(base) || OVERRIDES[base] === null) return [];
+  if (typeof OVERRIDES[base] === "string") return [OVERRIDES[base]];
+
+  const out = [];
+  for (const { suffix, name } of index.get(base) ?? []) {
+    if (lower === suffix || lower.endsWith(`/${suffix}`)) out.push(name);
+  }
+  const parts = p.split("/");
+  for (let i = 0; i < parts.length - 2; i++) {
+    const dir = parts[i].toLowerCase();
+    const next = parts[i + 1];
+    if (GENERIC_DIRS.test(next)) continue;
+    if (dir === "common" && parts[i - 1]?.toLowerCase() === "steamapps") {
+      out.push(steamName(parts.slice(0, i).join("/"), next));
+    } else if (/games|jogos|juegos/.test(dir)) {
+      // Covers Epic Games\X, GOG Games\X, Riot Games\X, D:\Jogos\X and the like.
+      out.push(next);
+    }
+  }
+  return [...new Set(out)];
+}
+
+// Full paths of running processes (Windows) or their command-line args (Linux, incl. Wine/Proton).
+function runningPaths() {
+  if (process.platform === "win32") {
+    const out = execFileSync("powershell", ["-NoProfile", "-Command", "Get-Process | ForEach-Object Path"],
+      { encoding: "utf8", windowsHide: true });
+    return out.split(/\r?\n/).filter(Boolean);
+  }
+  const paths = [];
+  for (const pid of readdirSync("/proc").filter((d) => /^\d+$/.test(d))) {
+    try { paths.push(...readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter((a) => /[\\/]/.test(a))); } catch {}
+  }
+  return paths;
+}
+
+// ---------------------------------------------------------------- notifications
 
 // Windows toast via PowerShell's own app id; the XML goes through env to dodge quoting.
 const TOAST_PS = "[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]>$null;" +
@@ -80,6 +175,8 @@ export function notify(title, text) {
   execFile("powershell", ["-NoProfile", "-Command", TOAST_PS], { env: { ...process.env, TOAST }, windowsHide: true }, done);
 }
 
+// ---------------------------------------------------------------- main
+
 async function main() {
   // The OS frees the port when the process dies, so there's no stale lock to clean up.
   const lock = createServer().unref();
@@ -89,7 +186,8 @@ async function main() {
   }).listen(LOCK_PORT, "127.0.0.1", resolve));
 
   console.log("tracker started");
-  if (!Object.keys(GAMES).length) console.error("games.json is missing or empty: no games to watch");
+  await loadDiscordIndex();
+  setInterval(loadDiscordIndex, DISCORD_DB_MAX_AGE).unref();
 
   // A re-auth inside backloggd-mcp's request queue deadlocks it (the re-auth request
   // waits behind the one that triggered it). So: authenticate up front, time out any
@@ -102,23 +200,45 @@ async function main() {
     await session.ensureAuthenticated();
     return { api: new BackloggdApi(http, session), session, http, config };
   }
-  async function tool(name, args) {
+  async function backloggd(fn) {
     let timer;
     const timeout = new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error("Backloggd timed out (BACKLOGGD_SESSION expired?)")), 120_000);
     });
     try {
-      const run = (async () => {
-        ctx ??= await connect();
-        return writeTools.find((t) => t.name === name).handler(args, ctx);
-      })();
-      return await Promise.race([run, timeout]);
+      return await Promise.race([(async () => fn((ctx ??= await connect())))(), timeout]);
     } catch (e) {
       if (e.message.startsWith("Backloggd timed out")) ctx = null;
       throw e;
     } finally {
       clearTimeout(timer);
     }
+  }
+  const tool = (name, args) => backloggd((c) => writeTools.find((t) => t.name === name).handler(args, c));
+
+  // Only an exact title match counts: autocomplete's fuzzy hits would log the wrong game,
+  // and requiring a real Backloggd game is what keeps ordinary apps from being tracked.
+  // ponytail: several games sharing a title resolve to autocomplete's first (most popular) one.
+  const resolved = new Map();
+  async function resolve(name) {
+    const key = normaliseTitle(name);
+    if (!key) return null;
+    if (!resolved.has(key)) {
+      const hits = await backloggd((c) => c.api.autocomplete(name));
+      const hit = hits.find((h) => normaliseTitle(h.title) === key);
+      resolved.set(key, hit ? { id: hit.id, title: hit.title } : null);
+      if (hit) console.log(`recognised ${name} -> ${hit.title} (${hit.id})`);
+    }
+    return resolved.get(key);
+  }
+  async function currentGame() {
+    for (const path of runningPaths()) {
+      for (const name of candidatesFor(path)) {
+        const game = await resolve(name);
+        if (game) return game;
+      }
+    }
+    return null;
   }
 
   async function logSession(s) {
@@ -129,29 +249,30 @@ async function main() {
       await tool("log_game", { game: s.game, review_has_spoilers: false, is_replay: false, is_mastered: false });
       await tool("log_play_session", s);
     }
-    console.log(`logged ${s.game}: ${s.hours}h${s.minutes}m on ${s.date}`);
-    notify("Sessão salva no Backloggd", `${s.game} · ${s.hours}h${String(s.minutes).padStart(2, "0")}m`);
+    console.log(`logged ${s.title}: ${s.hours}h${s.minutes}m on ${s.date}`);
+    notify("Sessão salva no Backloggd", `${s.title} · ${s.hours}h${String(s.minutes).padStart(2, "0")}m`);
   }
 
   let state = null;
   try { state = JSON.parse(readFileSync(STATE, "utf8")); } catch {}
+  if (state && !state.id) state = null; // pre-autodetect state file
 
   for (;;) {
     try {
-      const game = currentGame();
+      const game = await currentGame();
       const next = tick(state, game, Date.now());
       if (next.ended) {
         const s = toSession(next.ended);
         // Print the full session on failure so it can be entered by hand.
         if (s) await logSession(s).catch((e) => {
           console.error("failed to log", JSON.stringify(s), e.message);
-          notify("Falha ao salvar sessão", `${s.game} (${s.hours}h${s.minutes}m): ${e.message}`);
+          notify("Falha ao salvar sessão", `${s.title} (${s.hours}h${s.minutes}m): ${e.message}`);
         });
       }
-      if (next.state && next.state.game !== state?.game) {
-        console.log(`playing ${next.state.game}`);
-        await tool("set_game_status", { game: next.state.game, status: "playing" })
-          .catch((e) => console.error(`shelf ${next.state.game}:`, e.message));
+      if (next.state && next.state.id !== state?.id) {
+        console.log(`playing ${next.state.title}`);
+        await tool("set_game_status", { game: String(next.state.id), status: "playing" })
+          .catch((e) => console.error(`shelf ${next.state.title}:`, e.message));
       }
       state = next.state;
       // Survive restarts mid-session.
