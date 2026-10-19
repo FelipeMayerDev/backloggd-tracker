@@ -3,3 +3,4 @@ node_modules
 games.json
 state.json
 tracker.log
+build

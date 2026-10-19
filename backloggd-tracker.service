@@ -5,7 +5,7 @@ Description=Log play sessions to Backloggd
 [Service]
 WorkingDirectory=%h/backloggd-tracker
 # If node isn't found (nvm, mise, asdf), replace with the absolute path from `which node`.
-ExecStart=/usr/bin/env node --env-file=.env tracker.mjs
+ExecStart=/usr/bin/env node tracker.mjs
 Restart=on-failure
 
 [Install]

@@ -4,11 +4,15 @@
   "description": "Registra sessões de jogo do Windows no Backloggd automaticamente",
   "scripts": {
     "test": "node tracker.test.mjs",
-    "start": "node --env-file=.env tracker.mjs"
+    "start": "node tracker.mjs",
+    "build": "node build.mjs"
   },
   "license": "MIT",
   "type": "module",
   "dependencies": {
     "backloggd-mcp": "file:vendor/backloggd-mcp-0.1.1-patched.tgz"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

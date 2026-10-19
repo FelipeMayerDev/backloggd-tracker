@@ -8,6 +8,12 @@ Registra automaticamente no [Backloggd](https://backloggd.com) as sessões dos j
 
 > Projeto não oficial, sem vínculo com o Backloggd. O Backloggd não tem API pública: este projeto usa os endpoints internos do site, via [backloggd-mcp](https://github.com/DenisionSoft/backloggd-mcp), e pode quebrar quando o site mudar.
 
+## Download para Windows (sem instalar nada)
+
+Baixe o `backloggd-tracker-windows.zip` na página de [Releases](https://github.com/FelipeMayerDev/backloggd-tracker/releases), extraia e siga o `LEIA-ME.txt` que vem dentro. O `.exe` já traz o Node embutido, roda sem janela e pode ser colocado no `shell:startup`.
+
+O resto deste README é para quem quer rodar a partir do código-fonte (Windows ou Linux).
+
 ## Requisitos
 
 - Windows ou Linux
@@ -88,6 +94,16 @@ A cada minuto, o tracker lista os processos (`tasklist` no Windows, `ps` no Linu
 
 ## Testes
 
-```powershell
+```sh
 npm test
 ```
+
+## Gerar o executável
+
+```sh
+npm run build
+```
+
+Funciona em qualquer sistema. O script junta tudo num arquivo com esbuild, baixa o `node.exe` oficial da mesma versão do seu Node (conferindo o SHA-256), embute o código com `node --build-sea` e marca o `.exe` como aplicativo sem console. O resultado é `build/backloggd-tracker-windows.zip`. Precisa de um Node com `--build-sea` (testado no 26) e do `bsdtar`, que no Windows já vem como `tar`.
+
+O `.exe` não tem assinatura digital, então o SmartScreen avisa na primeira execução.

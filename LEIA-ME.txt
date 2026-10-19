@@ -1,0 +1,70 @@
+BACKLOGGD TRACKER
+=================
+
+Registra no Backloggd, sozinho, o tempo que voce joga cada jogo.
+Abriu o jogo: ele vai para "playing". Fechou: a sessao entra no diario do jogo
+e aparece uma notificacao do Windows.
+
+Mantenha os 3 arquivos sempre juntos na mesma pasta:
+  backloggd-tracker.exe, .env e games.json
+
+
+1. ESCOLHA UMA PASTA
+   Extraia o zip numa pasta que nao vai mudar de lugar,
+   por exemplo: Documentos\backloggd-tracker
+
+
+2. LOGIN DO BACKLOGGD (arquivo .env)
+   a) Abra backloggd.com no navegador, ja logado.
+   b) Aperte F12 > aba "Application" (no Firefox: "Armazenamento")
+      > Cookies > https://backloggd.com
+   c) Copie o valor de "_backloggd_session".
+   d) Abra o arquivo .env com o Bloco de Notas e cole depois do "=":
+         BACKLOGGD_SESSION=valor_que_voce_copiou
+      Salve.
+
+   O cookie expira de tempos em tempos. Quando aparecer a notificacao
+   "Falha ao salvar sessao", repita este passo e reinicie o tracker.
+
+
+3. SEUS JOGOS (arquivo games.json)
+   Abra o games.json no Bloco de Notas. Cada linha liga o executavel do
+   jogo ao nome dele no Backloggd:
+
+      {
+        "CONTROLResonant.exe": "Control Resonant",
+        "eldenring.exe": "Elden Ring"
+      }
+
+   - Para descobrir o executavel: abra o jogo, aperte Ctrl+Shift+Esc,
+     va na aba "Detalhes" e procure o nome do .exe.
+   - Escreva o nome do jogo exatamente como aparece no Backloggd.
+   - Entre as linhas vai virgula; depois da ultima, nao.
+
+
+4. TESTE
+   De dois cliques no backloggd-tracker.exe. Nenhuma janela abre, ele roda
+   escondido. Abra um jogo da lista e espere 1 minuto: deve aparecer um
+   arquivo tracker.log na pasta com "playing <jogo>".
+
+   Se o Windows mostrar "O Windows protegeu o computador", clique em
+   "Mais informacoes" > "Executar assim mesmo". O aviso aparece porque o
+   programa nao tem assinatura digital paga.
+
+
+5. INICIAR JUNTO COM O WINDOWS
+   a) Clique com o botao direito no backloggd-tracker.exe >
+      "Mostrar mais opcoes" > "Criar atalho".
+   b) Aperte Win+R, digite  shell:startup  e de Enter.
+   c) Mova o atalho criado para a pasta que abriu.
+   Pronto: ele inicia sozinho sempre que voce entrar no Windows.
+
+
+DUVIDAS
+   - Mudou o .env ou o games.json? Reinicie o tracker: Ctrl+Shift+Esc >
+     Detalhes > backloggd-tracker.exe > Finalizar tarefa, e abra de novo.
+   - Sessoes com menos de 5 minutos sao ignoradas.
+   - Abrir duas vezes nao duplica nada: a segunda copia fecha sozinha.
+   - O que aconteceu fica registrado no tracker.log.
+
+Codigo e mais informacoes: https://github.com/FelipeMayerDev/backloggd-tracker

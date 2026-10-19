@@ -1,17 +1,31 @@
 // Watches running processes (Windows or Linux) for the games in games.json and logs each session to Backloggd.
 // Env: backloggd-mcp auth (BACKLOGGD_SESSION | BACKLOGGD_USERNAME/PASSWORD | BACKLOGGD_BROWSER_IMPORT=firefox).
-import { readFileSync, writeFileSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, rmSync, appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { execFile, execFileSync } from "node:child_process";
+import { createServer } from "node:net";
+import { isSea } from "node:sea";
 import { loadConfig } from "backloggd-mcp/dist/config.js";
 import { HttpClient } from "backloggd-mcp/dist/http/client.js";
 import { SessionManager } from "backloggd-mcp/dist/auth/session.js";
 import { BackloggdApi } from "backloggd-mcp/dist/api/index.js";
 import { writeTools } from "backloggd-mcp/dist/tools/write.js";
 
+// Files live next to the script, or next to the .exe when built as a single executable.
+const here = (f) => fileURLToPath(new URL(f, import.meta.url));
+try { process.loadEnvFile(here(".env")); } catch {}
+
+// The .exe has no console window, so its output goes to tracker.log.
+if (isSea()) {
+  for (const k of ["log", "error"]) {
+    console[k] = (...a) => appendFileSync(here("tracker.log"), `${new Date().toLocaleString("sv")} ${a.join(" ")}\n`);
+  }
+}
+
 const POLL_MS = 60_000;
 const MIN_MINUTES = Number(process.env.MIN_MINUTES ?? 5); // ignore launcher blips
-const STATE = new URL("./state.json", import.meta.url);
+const STATE = here("state.json");
+const LOCK_PORT = 47613; // held while running, so a second copy can't double-log sessions
 
 const day = (t) => new Date(t).toLocaleDateString("sv"); // YYYY-MM-DD, local time
 
@@ -33,12 +47,12 @@ export function toSession({ game, start, end }) {
 
 // games.json maps an exe name to its Backloggd title.
 let GAMES = {};
-try { GAMES = JSON.parse(readFileSync(new URL("./games.json", import.meta.url), "utf8")); } catch {}
+try { GAMES = JSON.parse(readFileSync(here("games.json"), "utf8")); } catch {}
 
 // Lowercased exe names of running processes.
 export function runningExes() {
   if (process.platform === "win32") {
-    const out = execFileSync("tasklist", ["/fo", "csv", "/nh"], { encoding: "utf8" });
+    const out = execFileSync("tasklist", ["/fo", "csv", "/nh"], { encoding: "utf8", windowsHide: true });
     return new Set(out.split(/\r?\n/).map((l) => l.slice(1, l.indexOf('"', 1)).toLowerCase()));
   }
   // Native and Wine/Proton games carry their exe path in the command line.
@@ -67,6 +81,14 @@ export function notify(title, text) {
 }
 
 async function main() {
+  // The OS frees the port when the process dies, so there's no stale lock to clean up.
+  const lock = createServer().unref();
+  await new Promise((resolve) => lock.once("error", () => {
+    console.error("tracker is already running");
+    process.exit(0);
+  }).listen(LOCK_PORT, "127.0.0.1", resolve));
+
+  console.log("tracker started");
   if (!Object.keys(GAMES).length) console.error("games.json is missing or empty: no games to watch");
 
   // A re-auth inside backloggd-mcp's request queue deadlocks it (the re-auth request
@@ -141,4 +163,4 @@ async function main() {
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) main();
+if (isSea() || process.argv[1] === fileURLToPath(import.meta.url)) main();
