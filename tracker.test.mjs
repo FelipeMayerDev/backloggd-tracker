@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { tick, toSession, candidatesFor, indexDiscord, normaliseTitle } from "./tracker.mjs";
+import { tick, toSession, candidatesFor, normaliseTitle } from "./tracker.mjs";
 
 const T = new Date("2026-10-19T20:00:00").getTime();
 const min = 60_000;
@@ -27,20 +27,18 @@ assert.equal(toSession({ id: 1, title: "A", start: T, end: T + 300 * min }).end_
 // Detection.
 assert.equal(normaliseTitle("ELDEN RING™"), normaliseTitle("Elden Ring"));
 assert.equal(normaliseTitle("Hollow Knight: Silksong"), normaliseTitle("Hollow Knight Silksong"));
-const index = indexDiscord([["Control", ["control/control_dx12.exe"]], ["Other", ["game.exe"]]]);
-assert.deepEqual(candidatesFor("D:\\Stuff\\Control\\control_dx12.exe", index), ["Control"]);
-assert.deepEqual(candidatesFor("D:\\Stuff\\NotControl\\control_dx12.exe", index), []); // suffix must match a whole folder
-assert.deepEqual(candidatesFor("C:\\Games e Jogos\\Control Resonant\\CONTROLResonant.exe", index), ["Control Resonant"]);
-assert.deepEqual(candidatesFor("C:\\Program Files\\Epic Games\\Launcher\\Portal\\x.exe", index), []);
-assert.deepEqual(candidatesFor("C:\\Riot Games\\VALORANT\\live\\VALORANT.exe", index), ["VALORANT"]);
-assert.deepEqual(candidatesFor("Z:\\home\\me\\Games\\Hades\\Hades.exe", index), ["Hades"]); // Wine path
-assert.deepEqual(candidatesFor("C:\\Windows\\explorer.exe", index), []);
-assert.deepEqual(candidatesFor("C:\\Steam\\steamapps\\common\\wallpaper_engine\\wallpaper64.exe", index), []);
+assert.deepEqual(candidatesFor("D:\\Stuff\\Control\\control_dx12.exe"), []); // outside any games folder
+assert.deepEqual(candidatesFor("C:\\Games e Jogos\\Control Resonant\\CONTROLResonant.exe"), ["Control Resonant"]);
+assert.deepEqual(candidatesFor("C:\\Program Files\\Epic Games\\Launcher\\Portal\\x.exe"), []);
+assert.deepEqual(candidatesFor("C:\\Riot Games\\VALORANT\\live\\VALORANT.exe"), ["VALORANT"]);
+assert.deepEqual(candidatesFor("Z:\\home\\me\\Games\\Hades\\Hades.exe"), ["Hades"]); // Wine path
+assert.deepEqual(candidatesFor("C:\\Windows\\explorer.exe"), []);
+assert.deepEqual(candidatesFor("C:\\Steam\\steamapps\\common\\wallpaper_engine\\wallpaper64.exe"), []);
 
 // Steam: the appmanifest name wins over the install folder name.
 const lib = join(mkdtempSync(join(tmpdir(), "bt-")), "steamapps");
 mkdirSync(join(lib, "common", "DarkSoulsIII", "Game"), { recursive: true });
 writeFileSync(join(lib, "appmanifest_374320.acf"), '"AppState"\n{\n\t"name"\t\t"DARK SOULS™ III"\n\t"installdir"\t\t"DarkSoulsIII"\n}');
-assert.deepEqual(candidatesFor(join(lib, "common", "DarkSoulsIII", "Game", "DarkSoulsIII.exe"), index), ["DARK SOULS™ III"]);
+assert.deepEqual(candidatesFor(join(lib, "common", "DarkSoulsIII", "Game", "DarkSoulsIII.exe")), ["DARK SOULS™ III"]);
 
 console.log("ok");

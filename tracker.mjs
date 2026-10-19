@@ -1,6 +1,6 @@
 // Detects the game you're playing (Windows or Linux) and logs each session to Backloggd.
 // Env: backloggd-mcp auth (BACKLOGGD_SESSION | BACKLOGGD_USERNAME/PASSWORD | BACKLOGGD_BROWSER_IMPORT=firefox).
-import { readFileSync, writeFileSync, rmSync, appendFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, rmSync, appendFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { execFile, execFileSync } from "node:child_process";
 import { createServer } from "node:net";
@@ -26,8 +26,6 @@ const POLL_MS = 60_000;
 const MIN_MINUTES = Number(process.env.MIN_MINUTES ?? 5); // ignore launcher blips
 const STATE = here("state.json");
 const LOCK_PORT = 47613; // held while running, so a second copy can't double-log sessions
-const DISCORD_DB = here("discord-games.json");
-const DISCORD_DB_MAX_AGE = 7 * 24 * 3600_000;
 
 const day = (t) => new Date(t).toLocaleDateString("sv"); // YYYY-MM-DD, local time
 
@@ -61,43 +59,6 @@ const GENERIC_DIRS = /^(launcher|client|bin|common|redist|_commonredist|tools|st
 export const normaliseTitle = (s) =>
   s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 
-// Discord's public list of detectable games, indexed by exe basename.
-let discordIndex = new Map();
-export function indexDiscord(apps) {
-  const index = new Map();
-  for (const [name, exes] of apps) {
-    for (const exe of exes) {
-      const base = exe.split("/").pop();
-      if (!index.has(base)) index.set(base, []);
-      index.get(base).push({ suffix: exe, name });
-    }
-  }
-  return index;
-}
-
-async function loadDiscordIndex() {
-  let apps = null;
-  try {
-    if (Date.now() - statSync(DISCORD_DB).mtimeMs < DISCORD_DB_MAX_AGE) apps = JSON.parse(readFileSync(DISCORD_DB, "utf8"));
-  } catch {}
-  if (!apps) {
-    try {
-      const res = await fetch("https://discord.com/api/v9/applications/detectable");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      apps = (await res.json())
-        .map((a) => [a.name, (a.executables ?? [])
-          .filter((e) => (e.os === "win32" || e.os === "linux") && !e.is_launcher)
-          .map((e) => e.name.toLowerCase())])
-        .filter(([, exes]) => exes.length);
-      writeFileSync(DISCORD_DB, JSON.stringify(apps));
-    } catch (e) {
-      console.error("discord game list:", e.message);
-      try { apps = JSON.parse(readFileSync(DISCORD_DB, "utf8")); } catch { apps = []; }
-    }
-  }
-  discordIndex = indexDiscord(apps);
-}
-
 // Steam's appmanifest gives the official name for a steamapps/common/<installdir> folder.
 const steamNames = new Map();
 function steamName(libraryRoot, installdir) {
@@ -119,17 +80,13 @@ function steamName(libraryRoot, installdir) {
 }
 
 // Candidate game names for one process path, best guess first.
-export function candidatesFor(path, index = discordIndex) {
+export function candidatesFor(path) {
   const p = path.replace(/\\/g, "/");
-  const lower = p.toLowerCase();
-  const base = lower.split("/").pop();
+  const base = p.toLowerCase().split("/").pop();
   if (IGNORED.has(base) || OVERRIDES[base] === null) return [];
   if (typeof OVERRIDES[base] === "string") return [OVERRIDES[base]];
 
   const out = [];
-  for (const { suffix, name } of index.get(base) ?? []) {
-    if (lower === suffix || lower.endsWith(`/${suffix}`)) out.push(name);
-  }
   const parts = p.split("/");
   for (let i = 0; i < parts.length - 2; i++) {
     const dir = parts[i].toLowerCase();
@@ -186,8 +143,6 @@ async function main() {
   }).listen(LOCK_PORT, "127.0.0.1", resolve));
 
   console.log("tracker started");
-  await loadDiscordIndex();
-  setInterval(loadDiscordIndex, DISCORD_DB_MAX_AGE).unref();
 
   // A re-auth inside backloggd-mcp's request queue deadlocks it (the re-auth request
   // waits behind the one that triggered it). So: authenticate up front, time out any

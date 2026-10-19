@@ -63,11 +63,10 @@ journalctl --user -u backloggd-tracker -f   # logs
 
 A cada minuto, o tracker lista os processos em execução, pelo caminho completo no Windows e pela linha de comando no Linux, o que inclui jogos rodando por Wine/Proton. Para cada processo, ele tenta achar o nome do jogo assim:
 
-1. **Lista de jogos do Discord.** O Discord mantém uma [lista pública](https://discord.com/api/v9/applications/detectable) de cerca de 25 mil jogos, com os executáveis de cada um (é o que faz aparecer "Jogando X"). O tracker baixa essa lista e guarda em `discord-games.json` por 7 dias.
-2. **Pasta de instalação.** Para jogos da Steam (`steamapps/common/<pasta>`), o nome oficial vem do `appmanifest` da Steam. Fora da Steam, vale a pasta logo abaixo de qualquer diretório com "games" ou "jogos" no nome: `Epic Games\X`, `GOG Games\X`, `Riot Games\X`, `XboxGames\X`, `D:\Jogos\X`.
-3. **Confirmação no Backloggd.** O nome só conta se bater **exatamente** com o título de um jogo no Backloggd, ignorando maiúsculas, acentos e pontuação. Isso evita duas coisas: gravar a sessão no jogo errado por causa de uma busca aproximada, e tratar programas comuns como jogo. Por exemplo, "Riot Client" e "Epic Online Services" ficam de fora.
+1. **Pasta de instalação.** Para jogos da Steam (`steamapps/common/<pasta>`), o nome oficial vem do `appmanifest` da Steam. Fora da Steam, vale a pasta logo abaixo de qualquer diretório com "games" ou "jogos" no nome: `Epic Games\X`, `GOG Games\X`, `Riot Games\X`, `XboxGames\X`, `D:\Jogos\X`.
+2. **Confirmação no Backloggd.** O nome é buscado no próprio Backloggd, cuja base vem do IGDB, e só conta se bater **exatamente** com o título de um jogo, ignorando maiúsculas, acentos e pontuação. Isso evita duas coisas: gravar a sessão no jogo errado por causa de uma busca aproximada, e tratar programas comuns como jogo. Por exemplo, "Riot Client" e "Epic Online Services" ficam de fora.
 
-Se algum jogo não for reconhecido, ou se um programa for confundido com jogo, crie um `games.json` (veja `games.example.json`). Nele, cada nome de `.exe` aponta para o título correto no Backloggd, ou para `null` se deve ser ignorado.
+Jogos instalados fora dessas pastas não são reconhecidos. Para eles, e para corrigir qualquer erro, crie um `games.json` (veja `games.example.json`). Nele, cada nome de `.exe` aponta para o título correto no Backloggd, ou para `null` se deve ser ignorado.
 
 Além disso:
 

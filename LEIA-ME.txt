@@ -45,12 +45,13 @@ Mantenha o backloggd-tracker.exe e o .env sempre juntos na mesma pasta.
 
 
 COMO O JOGO E RECONHECIDO
-   - Pela lista de jogos do Discord (a mesma que mostra "Jogando X").
    - Pela pasta de instalacao: Steam, Epic, GOG, Riot, Xbox, ou qualquer
      pasta com "Games" ou "Jogos" no nome (ex.: D:\Jogos\Hades\Hades.exe).
    - So conta se o nome bater exatamente com um jogo do Backloggd, entao
      programas comuns nao viram "jogo".
-   - Emuladores nao sao reconhecidos (use o games.json abaixo).
+   - Jogos instalados em outras pastas e emuladores nao sao reconhecidos.
+     Dica: guarde seus jogos numa pasta chamada "Jogos" ou "Games", ou use
+     o games.json abaixo.
 
    Algum jogo nao foi reconhecido, ou um programa foi confundido com jogo?
    Crie um arquivo games.json na pasta do tracker:
