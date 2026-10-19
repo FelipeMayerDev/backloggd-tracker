@@ -1,0 +1,5 @@
+node_modules
+.env
+games.json
+state.json
+tracker.log

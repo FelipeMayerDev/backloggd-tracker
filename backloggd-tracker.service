@@ -1,0 +1,12 @@
+# Copy to ~/.config/systemd/user/ and adjust WorkingDirectory to where you cloned the repo.
+[Unit]
+Description=Log play sessions to Backloggd
+
+[Service]
+WorkingDirectory=%h/backloggd-tracker
+# If node isn't found (nvm, mise, asdf), replace with the absolute path from `which node`.
+ExecStart=/usr/bin/env node --env-file=.env tracker.mjs
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
