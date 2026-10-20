@@ -52,8 +52,13 @@ COMO O JOGO E RECONHECIDO
      "Games" ou "Jogos" no nome.
    O nome so conta se bater exatamente com um jogo do Backloggd.
 
-   Quando reconhece um jogo novo, ele aparece numa notificacao
-   "Jogo reconhecido" e e salvo no arquivo games.json, na pasta do tracker.
+   Quando reconhece um jogo novo, ele pergunta numa notificacao:
+   "Voce esta jogando X?" [Sim, e esse] [Nao e]
+   - Sim: o jogo e salvo no games.json e as sessoes vao para o Backloggd.
+   - Nao: aquele programa passa a ser ignorado.
+   Ate voce responder, nada e enviado. Se o jogo estiver em tela cheia,
+   a pergunta pode ficar guardada na central de notificacoes (Win+N), e
+   ela volta quando voce fechar o jogo.
    Emuladores e launchers (cliente do League, Epic, Battle.net...) sao
    ignorados.
 

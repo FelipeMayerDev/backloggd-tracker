@@ -3,7 +3,8 @@
 import { readFileSync, writeFileSync, rmSync, appendFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { execFile, execFileSync } from "node:child_process";
-import { createServer } from "node:net";
+import { createServer, connect as dial } from "node:net";
+import { createHash } from "node:crypto";
 import { isSea } from "node:sea";
 import { loadConfig } from "backloggd-mcp/dist/config.js";
 import { HttpClient } from "backloggd-mcp/dist/http/client.js";
@@ -31,7 +32,8 @@ const day = (t) => new Date(t).toLocaleDateString("sv"); // YYYY-MM-DD, local ti
 
 // Pure transition on { id, title } games: returns the next state and the finished session, if any.
 export function tick(state, game, now) {
-  if (state?.id === game?.id) return { state: state && { ...state, last: now } };
+  // `pending` follows the latest identification, so a confirmation mid-session sticks.
+  if (state?.id === game?.id) return { state: state && { ...state, pending: game.pending, last: now } };
   // End at the last poll that saw it, so downtime or restarts don't inflate the session.
   const ended = state && { ...state, end: state.last };
   return { state: game ? { ...game, start: now, last: now } : null, ended };
@@ -176,6 +178,8 @@ export async function identify({ path, title, isGame }, resolve) {
   if (listed === null) return null;
   if (typeof listed === "string") return resolve(listed);
   if (identified.has(path)) return identified.get(path);
+  const key = pendingKey(path);
+  if (pending[key]) return { id: pending[key].id, title: pending[key].title, pending: key };
 
   const folders = folderNames(path);
   let game = null;
@@ -190,13 +194,77 @@ export async function identify({ path, title, isGame }, resolve) {
       }
     }
   }
-  identified.set(path, game);
   if (game) {
-    learn(path, game.title);
-    console.log(`recognised ${path} -> ${game.title} (${game.id})`);
-    notify("Jogo reconhecido", `${game.title} foi adicionado ao games.json`);
+    // Nothing reaches Backloggd until the user confirms; see "confirmation" below.
+    pending[key] = { path, id: game.id, title: game.title, sessions: [] };
+    savePending();
+    console.log(`recognised ${path} -> ${game.title} (${game.id}), awaiting confirmation`);
+    game = { ...game, pending: key };
   }
+  identified.set(path, game);
   return game;
+}
+
+// ---------------------------------------------------------------- confirmation
+
+// Newly recognised games wait for a yes/no. Their sessions are kept here meanwhile.
+const PENDING_FILE = here("pending.json");
+let pending = {}; // key -> { path, id, title, sessions }
+try { pending = JSON.parse(readFileSync(PENDING_FILE, "utf8")); } catch {}
+const savePending = () => writeFileSync(PENDING_FILE, JSON.stringify(pending, null, 2));
+export const pendingKey = (path) => createHash("sha1").update(path.toLowerCase()).digest("hex").slice(0, 10);
+
+// Answers are queued and handled by the poll loop, so they never race its state updates.
+const answers = [];
+let wake = () => {};
+function queueAnswer(key, yes) {
+  answers.push({ key, yes });
+  wake();
+}
+
+// Records the answer in games.json and returns the pending entry it settled.
+function settle({ key, yes }) {
+  const p = pending[key];
+  if (!p) return null;
+  delete pending[key];
+  savePending();
+  identified.delete(p.path);
+  learn(p.path, yes ? p.title : null);
+  console.log(`${yes ? "confirmed" : "rejected"} ${p.title} for ${p.path}`);
+  return p;
+}
+
+// A toast button opens backloggd-tracker:answer?ok=1&key=..., which Windows hands to a new
+// copy of this program; that copy forwards it to the running one over the lock port.
+const LINK = "backloggd-tracker";
+export function parseLink(link) {
+  const u = new URL(link.trim());
+  if (u.protocol !== `${LINK}:` || !u.pathname.startsWith("answer")) return null;
+  // Windows sometimes appends a slash to the URI.
+  return { key: (u.searchParams.get("key") ?? "").replace(/[^0-9a-f]/g, ""), yes: (u.searchParams.get("ok") ?? "").startsWith("1") };
+}
+
+function registerLink() {
+  const cmd = isSea() ? `"${process.execPath}" "%1"` : `"${process.execPath}" "${fileURLToPath(import.meta.url)}" "%1"`;
+  const k = `HKCU\\Software\\Classes\\${LINK}`;
+  for (const args of [[k, "/ve", "/d", "URL:Backloggd Tracker"], [k, "/v", "URL Protocol", "/d", ""], [`${k}\\shell\\open\\command`, "/ve", "/d", cmd]]) {
+    execFileSync("reg", ["add", ...args, "/f"], { windowsHide: true, stdio: "ignore" });
+  }
+}
+
+function ask(key, title, text) {
+  if (process.platform !== "win32") {
+    return execFile("notify-send", ["-a", "Backloggd", "-A", "yes=Sim, é esse", "-A", "no=Não é", "--wait", title, text], (e, out) => {
+      // ponytail: a notify-send without actions can't ask, so it behaves as if confirmed.
+      if (e) return queueAnswer(key, true);
+      if (/^(yes|no)$/.test(out.trim())) queueAnswer(key, out.trim() === "yes");
+    });
+  }
+  const link = (ok) => `${LINK}:answer?ok=${ok}&amp;key=${key}`;
+  toast(`<toast scenario="reminder" activationType="protocol" launch="${LINK}:open"><visual><binding template="ToastGeneric">` +
+    `<text>${esc(title)}</text><text>${esc(text)}</text></binding></visual><actions>` +
+    `<action content="Sim, é esse" activationType="protocol" arguments="${link(1)}"/>` +
+    `<action content="Não é" activationType="protocol" arguments="${link(0)}"/></actions></toast>`);
 }
 
 
@@ -208,25 +276,36 @@ const TOAST_PS = "[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.
   "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe')" +
   ".Show([Windows.UI.Notifications.ToastNotification]::new($x))";
 
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const toast = (TOAST) => execFile("powershell", ["-NoProfile", "-Command", TOAST_PS],
+  { env: { ...process.env, TOAST }, windowsHide: true }, (e) => e && console.error("notify:", e.message));
+
 export function notify(title, text) {
-  const done = (e) => e && console.error("notify:", e.message);
-  if (process.platform !== "win32") return execFile("notify-send", ["-a", "Backloggd", title, text], done);
-  const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const TOAST = `<toast><visual><binding template="ToastGeneric"><text>${esc(title)}</text><text>${esc(text)}</text></binding></visual></toast>`;
-  execFile("powershell", ["-NoProfile", "-Command", TOAST_PS], { env: { ...process.env, TOAST }, windowsHide: true }, done);
+  if (process.platform !== "win32") return execFile("notify-send", ["-a", "Backloggd", title, text], () => {});
+  // The launch link keeps a click on the toast from opening PowerShell.
+  toast(`<toast activationType="protocol" launch="${LINK}:open"><visual><binding template="ToastGeneric">` +
+    `<text>${esc(title)}</text><text>${esc(text)}</text></binding></visual></toast>`);
 }
 
 // ---------------------------------------------------------------- main
 
 async function main() {
   // The OS frees the port when the process dies, so there's no stale lock to clean up.
-  const lock = createServer().unref();
+  const lock = createServer((sock) => {
+    let buf = "";
+    sock.setEncoding("utf8").on("data", (d) => (buf += d)).on("end", () => {
+      try { const a = parseLink(buf); if (a) queueAnswer(a.key, a.yes); } catch {}
+    });
+  }).unref();
   await new Promise((resolve) => lock.once("error", () => {
     console.error("tracker is already running");
     process.exit(0);
   }).listen(LOCK_PORT, "127.0.0.1", resolve));
 
   console.log("tracker started");
+  if (process.platform === "win32") {
+    try { registerLink(); } catch (e) { console.error("register link:", e.message); }
+  }
 
   // A re-auth inside backloggd-mcp's request queue deadlocks it (the re-auth request
   // waits behind the one that triggered it). So: authenticate up front, time out any
@@ -286,38 +365,79 @@ async function main() {
       await tool("log_play_session", s);
     }
     console.log(`logged ${s.title}: ${s.hours}h${s.minutes}m on ${s.date}`);
-    notify("Sessão salva no Backloggd", `${s.title} · ${s.hours}h${String(s.minutes).padStart(2, "0")}m`);
+    notify("Sessão salva no Backloggd", `${s.title} · ${hm(s)}m`);
   }
 
   let state = null;
   try { state = JSON.parse(readFileSync(STATE, "utf8")); } catch {}
   if (state && !state.id) state = null; // pre-autodetect state file
+  if (pending[state?.pending]) {
+    ask(state.pending, `Você está jogando ${state.title}?`, "Confirme para o Backloggd Tracker registrar suas sessões.");
+  }
+
+  const hm = (s) => `${s.hours}h${String(s.minutes).padStart(2, "0")}`;
+  const persist = () => (state ? writeFileSync(STATE, JSON.stringify(state)) : rmSync(STATE, { force: true }));
+
+  async function handleAnswer(a) {
+    const p = settle(a);
+    if (!p) return;
+    if (a.yes) {
+      for (const s of p.sessions) {
+        await logSession(s).catch((e) => console.error("failed to log", JSON.stringify(s), e.message));
+      }
+      if (state?.id === p.id && state.pending) {
+        delete state.pending;
+        await tool("set_game_status", { game: String(p.id), status: "playing" })
+          .catch((e) => console.error(`shelf ${p.title}:`, e.message));
+      }
+    } else if (state?.id === p.id) {
+      state = null; // drop the session in progress
+    }
+    persist();
+  }
 
   for (;;) {
     try {
+      while (answers.length) await handleAnswer(answers.shift());
       const game = await currentGame();
       const next = tick(state, game, Date.now());
       if (next.ended) {
         const s = toSession(next.ended);
+        const p = pending[next.ended.pending];
+        if (s && p) {
+          // Asking again once the game is closed, when a toast is more likely to be seen.
+          p.sessions.push(s);
+          savePending();
+          ask(next.ended.pending, `Jogou ${s.title} por ${hm(s)}?`, "Confirme que é este jogo para salvar no Backloggd.");
+        }
         // Print the full session on failure so it can be entered by hand.
-        if (s) await logSession(s).catch((e) => {
+        else if (s) await logSession(s).catch((e) => {
           console.error("failed to log", JSON.stringify(s), e.message);
           notify("Falha ao salvar sessão", `${s.title} (${s.hours}h${s.minutes}m): ${e.message}`);
         });
       }
       if (next.state && next.state.id !== state?.id) {
         console.log(`playing ${next.state.title}`);
-        await tool("set_game_status", { game: String(next.state.id), status: "playing" })
-          .catch((e) => console.error(`shelf ${next.state.title}:`, e.message));
+        if (next.state.pending) {
+          ask(next.state.pending, `Você está jogando ${next.state.title}?`, "Confirme para o Backloggd Tracker registrar suas sessões.");
+        } else {
+          await tool("set_game_status", { game: String(next.state.id), status: "playing" })
+            .catch((e) => console.error(`shelf ${next.state.title}:`, e.message));
+        }
       }
       state = next.state;
-      // Survive restarts mid-session.
-      state ? writeFileSync(STATE, JSON.stringify(state)) : rmSync(STATE, { force: true });
+      persist(); // survive restarts mid-session
     } catch (e) {
       console.error("poll:", e.message); // network blip: keep current session open
     }
-    await new Promise((r) => setTimeout(r, POLL_MS));
+    // An answer cuts the wait short so it takes effect right away.
+    await new Promise((r) => { wake = r; setTimeout(r, POLL_MS); });
   }
 }
 
-if (isSea() || process.argv[1] === fileURLToPath(import.meta.url)) main();
+// Launched by a toast button: hand the answer to the running tracker and quit.
+const link = process.argv.find((a) => a.startsWith(`${LINK}:`));
+if (link) {
+  const sock = dial(LOCK_PORT, "127.0.0.1", () => sock.end(link));
+  sock.on("error", () => console.error("tracker not running, answer lost:", link));
+} else if (isSea() || process.argv[1] === fileURLToPath(import.meta.url)) main();

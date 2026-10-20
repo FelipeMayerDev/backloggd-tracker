@@ -68,7 +68,10 @@ A cada minuto, o tracker olha todos os aplicativos abertos: o caminho completo e
    - o **Windows o classificou como jogo**, numa lista que ele mesmo mantém para o Modo de Jogo e a Game Bar (`HKCU\System\GameConfigStore`). Essa lista inclui jogos instalados em qualquer lugar: Downloads, repacks, `D:\`;
    - ou ele está numa **pasta de jogos**: `steamapps\common`, ou uma pasta com "games" ou "jogos" no nome (`Epic Games`, `GOG Games`, `Riot Games`, `XboxGames`, `D:\Jogos`).
 3. **Qual jogo?** O tracker junta nomes candidatos (o nome oficial da Steam pelo `appmanifest`, as pastas do caminho, o nome do produto e a descrição do `.exe`, o título da janela) e busca cada um no próprio Backloggd, cuja base vem do IGDB. Um candidato só conta se bater **exatamente** com o título de um jogo, ignorando maiúsculas, acentos e pontuação. Se vários baterem, fica o título mais longo, para que "Clair Obscur Expedition 33" ganhe do nome interno "Sandfall".
-4. **Aprende.** O jogo reconhecido é gravado no `games.json` e aparece a notificação "Jogo reconhecido". Da próxima vez, ele é identificado direto, sem nova busca.
+4. **Pergunta.** Um jogo novo gera a notificação "Você está jogando X?", com os botões **Sim, é esse** e **Não é**, que fica na tela até você responder. Até lá, o tempo é contado, mas nada é enviado ao Backloggd. Se a sessão acabar sem resposta, a pergunta volta no fim, já com a duração ("Jogou X por 1h05?"). Com o jogo em tela cheia, o Windows costuma guardar as notificações na central de notificações, e os botões funcionam de lá também.
+5. **Aprende.** Com "Sim", o jogo é gravado no `games.json` e as sessões guardadas vão para o Backloggd. Com "Não", o executável é gravado como `null` e passa a ser ignorado. Da próxima vez, ele é identificado direto, sem pergunta.
+
+O botão abre um link `backloggd-tracker:`, que o tracker registra para o seu usuário (`HKCU\Software\Classes`, sem precisar de admin). O link inicia uma segunda cópia do `.exe`, que repassa a resposta para o tracker em execução e fecha. No Linux, a pergunta usa os botões do `notify-send`.
 
 Os dois filtros juntos (sinal de jogo e título exato) são necessários porque muitos aplicativos têm o mesmo nome de algum jogo antigo do Backloggd: Steam, Parsec e Hydra, por exemplo. Emuladores e launchers (cliente do League, Epic, Battle.net, EA, Ubisoft, GOG Galaxy) são ignorados.
 

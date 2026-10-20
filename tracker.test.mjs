@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { tick, toSession, folderNames, pathNames, normaliseTitle, identify } from "./tracker.mjs";
+import { tick, toSession, folderNames, pathNames, normaliseTitle, identify, parseLink } from "./tracker.mjs";
 
 const T = new Date("2026-10-19T20:00:00").getTime();
 const min = 60_000;
@@ -61,5 +61,11 @@ assert.equal(await identify({ path: "D:\\Emuladores\\Xenia\\xenia_canary.exe", t
 assert.equal(await identify({ path: "C:\\Riot Games\\League of Legends\\LeagueClientUx.exe", title: "", isGame: true }, fake), null);
 assert.equal(await identify({ path: "C:\\Program Files\\Parsec\\parsecd.exe", title: "Parsec", isGame: false }, fake), null);
 assert.deepEqual(asked, []);
+
+// Toast button links.
+assert.deepEqual(parseLink("backloggd-tracker:answer?ok=1&key=ab12cd34ef"), { key: "ab12cd34ef", yes: true });
+assert.deepEqual(parseLink("backloggd-tracker:answer?ok=0&key=ab12cd34ef/"), { key: "ab12cd34ef", yes: false });
+assert.equal(parseLink("backloggd-tracker:open"), null);
+assert.equal(parseLink("https://example.com/answer?ok=1&key=ab"), null);
 
 console.log("ok");
